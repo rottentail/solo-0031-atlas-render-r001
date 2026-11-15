@@ -350,6 +350,27 @@
         "通过存储或渲染结果观察已提交事实"
       ],
       "verification": "python3 scripts/walkthrough.py --workflow observe-service"
+    },
+    {
+      "id": "stroke-render",
+      "name": "矢量描边渲染",
+      "entry": "PUT /v1/scenes/{id} 携带 stroke 字段",
+      "success": "同一闭合图形同时呈现填充与等宽轮廓，冻结快照、交换包和后台PNG结果一致",
+      "failure": "非法描边400拒绝，超预算描边429且不入队",
+      "module_ids": [
+        "httpapi",
+        "service",
+        "raster",
+        "geometry",
+        "scene",
+        "bundle",
+        "engine"
+      ],
+      "steps": [
+        "经公开HTTP入口提交带描边的嵌套场景并冻结",
+        "通过交换包往返、幂等重放和解码像素核对几何与预算行为"
+      ],
+      "verification": "python3 scripts/walkthrough.py --workflow stroke-render && python3 -I scripts/verify_strokes.py"
     }
   ],
   "complexity": {

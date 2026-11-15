@@ -28,6 +28,8 @@
 
 文档字段：width、height、background、layers。每个图层有id、kind、width、height、transform、opacity、fill；transform包括x、y、scaleX、scaleY、degrees。图层可以有clip（x/y/width/height），group使用children，polygon使用points，image使用assetId。solid颜料有color；linear还包括endColor、from、to。示例是可直接提交的完整请求。
 
+矩形、椭圆和多边形图层可以带可选stroke字段：`{"width": <正数, 最大1024>, "color": "#RRGGBB"}`。width以场景单位度量并在世界空间保持等宽，旋转、非等比缩放和反射不会拉扁轮廓；group和image图层携带stroke会被400拒绝。描边与填充在同一图层内先填充后描边（source-over），共同受累积opacity和clip链约束。描边外扩的扫描区域计入工作预算，超预算的提交在入队前返回429。描边示例见 `examples/stroked-emblem.json`，端到端验证见 `scripts/walkthrough.py --workflow stroke-render`。
+
 幂等键长度1–80，使用英文字母、数字、下划线和连字符，首位不能是后两者。它在服务实例持久状态中全局生效，不随任务完成、取消、结果清理或进程重启失效。改换请求语义需使用新键。
 
 服务接受相同内容的素材重复上传，退役素材不接受重新上传。交换包导出保留快照状态；导入会创建全新的active场景，原快照不作为目标服务中的快照记录落地。导入目标ID必须未使用；共享素材必须内容相同且仍可用。

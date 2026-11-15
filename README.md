@@ -17,6 +17,7 @@ go run ./cmd/atlas
 
 ```sh
 python3 scripts/walkthrough.py --workflow submit-render --out var/demo
+python3 scripts/walkthrough.py --workflow stroke-render --out var/stroke-demo
 python3 scripts/walkthrough.py --workflow retire-asset
 python3 scripts/walkthrough.py --workflow cancel-render
 python3 scripts/walkthrough.py --workflow retry-render
@@ -40,8 +41,10 @@ python3 scripts/walkthrough.py --workflow compare-renders
 
 画布每边最多 1536 像素，输出缩放为 1 或 2；场景不超过 200 图层、8 层嵌套。PNG 素材每边最多 1024 像素、输入最多 2 MiB。编译后的工作量不得超过四千万个图层像素，队列最多接受 64 个未结束任务。
 
+矩形、椭圆和多边形支持可选矢量描边 `stroke: {width, color}`。宽度以场景单位解释，在世界空间沿轮廓等宽，因此嵌套组的旋转、非等比缩放和反射不会改变描边厚度；轮廓与填充在同一图层先填充后描边，共同受透明度和裁剪链约束。描边宽度上限 1024，组和位图图层不允许描边。描边外扩的扫描盒计入工作预算，超限任务在入队前以 429 拒绝。描边语义和验证材料见 `PROJECT_SPEC.md`、`examples/stroked-emblem.json`、`scripts/verify_strokes.py`。
+
 透明度为 0–1，变换中的 `scaleX`、`scaleY` 必须显式设置；省略会成为零而被拒绝。组的透明度乘到每个后代，属于分布式透明语义；当前没有离屏隔离组。缩放 2 表示两倍尺寸渲染，不表示输出降采样。位图按最近邻采样，颜色直接在编码通道上混合。
 
 持久化使用完整 JSON 状态的原子替换，保留全部任务与快照，事件只保留最近 500 条。适合中小规模、单写实例工作负载。清理结果只释放 PNG 字节，仍保留任务事实和摘要。进程重启可恢复任务；突然断电的文件系统耐久性不作额外保证。
 
-测试处于 deferred 阶段，基线未包含自动化测试套件或 `test_command`。生产工作流检查、构建与静态检查已单独提供。接口和持久状态的规则详见 `PROJECT_SPEC.md`、`docs/api.md`、`docs/operations.md`。
+`go test ./...` 覆盖描边的填充/轮廓合成、世界空间等宽（含旋转、非等比缩放、反射）、裁剪链、透明度、确定性、预算拒绝和校验规则；`scripts/verify_strokes.py` 对真实进程产出的 PNG 做解码级几何核对。完整性能与兼容矩阵仍留待后续任务。生产工作流检查、构建与静态检查已单独提供。接口和持久状态的规则详见 `PROJECT_SPEC.md`、`docs/api.md`、`docs/operations.md`。

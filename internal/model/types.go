@@ -34,6 +34,10 @@ type Paint struct {
 	From     Point  `json:"from"`
 	To       Point  `json:"to"`
 }
+type Stroke struct {
+	Width float64 `json:"width"`
+	Color string  `json:"color"`
+}
 type Layer struct {
 	ID        string    `json:"id"`
 	Kind      string    `json:"kind"`
@@ -42,6 +46,7 @@ type Layer struct {
 	Transform Transform `json:"transform"`
 	Opacity   float64   `json:"opacity"`
 	Fill      Paint     `json:"fill"`
+	Stroke    *Stroke   `json:"stroke,omitempty"`
 	Points    []Point   `json:"points,omitempty"`
 	AssetID   string    `json:"assetId,omitempty"`
 	Clip      *Rect     `json:"clip,omitempty"`

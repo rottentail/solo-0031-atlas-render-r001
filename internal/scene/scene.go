@@ -49,6 +49,17 @@ func Validate(d model.Document) error {
 					return model.Invalid("layer %s: invalid clip", l.ID)
 				}
 			}
+			if l.Stroke != nil {
+				if !finite(l.Stroke.Width) || l.Stroke.Width <= 0 || l.Stroke.Width > 1024 {
+					return model.Invalid("layer %s: stroke width must be within 0..1024", l.ID)
+				}
+				if _, e := paint.Parse(l.Stroke.Color); e != nil {
+					return model.Invalid("layer %s: invalid stroke color", l.ID)
+				}
+				if l.Kind == "group" || l.Kind == "image" {
+					return model.Invalid("layer %s: stroke is only allowed on rectangle, ellipse and polygon", l.ID)
+				}
+			}
 			if l.Kind == "group" {
 				if len(l.Children) == 0 {
 					return model.Invalid("group %s is empty", l.ID)

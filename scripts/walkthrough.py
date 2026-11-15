@@ -102,7 +102,31 @@ class Demo:
         return self.call('POST', '/v1/jobs', {'snapshotId': snapshot['id'], 'scale': scale}, 202, {'Idempotency-Key': key})
 
 
+def stroked_sample():
+    """Nested scene exercising rotation, non-uniform scale, clip and stroke."""
+    return {"width": 320, "height": 240, "background": "#F5F1E8", "layers": [
+        {"id": "plate", "kind": "rectangle", "width": 220, "height": 150,
+         "transform": {"x": 45, "y": 35, "scaleX": 1, "scaleY": 1, "degrees": 5},
+         "opacity": 1, "fill": {"kind": "linear", "color": "#145A70", "endColor": "#32A5A0",
+                                "from": {"x": 0, "y": 0}, "to": {"x": 220, "y": 150}},
+         "stroke": {"width": 4, "color": "#1C1C1C"}},
+        {"id": "accent", "kind": "ellipse", "width": 130, "height": 130,
+         "transform": {"x": 150, "y": 95, "scaleX": 1, "scaleY": 1, "degrees": 0},
+         "opacity": .85, "fill": {"kind": "solid", "color": "#E87E4F"},
+         "stroke": {"width": 3, "color": "#7A2E0E"}},
+        {"id": "inset", "kind": "group",
+         "transform": {"x": 150, "y": 100, "scaleX": 1.4, "scaleY": .7, "degrees": -8},
+         "opacity": .9, "clip": {"x": 0, "y": 0, "width": 90, "height": 75}, "children": [
+             {"id": "facet", "kind": "polygon", "width": 100, "height": 100,
+              "transform": {"scaleX": 1, "scaleY": 1}, "opacity": .8,
+              "fill": {"kind": "solid", "color": "#FFF4D5"},
+              "stroke": {"width": 5, "color": "#B03A2E"},
+              "points": [{"x": 10, "y": 90}, {"x": 50, "y": 0}, {"x": 100, "y": 90}]}]}]}
+
+
 def run(demo, workflow, out):
+    if workflow == 'stroke-render':
+        return stroke_render(demo, out)
     d = sample()
     put = lambda doc, rev=0: demo.call('PUT', '/v1/scenes/emblem', {'name': '双色印记', 'expectedRevision': rev, 'document': doc})
     scene = put(d)
@@ -184,6 +208,75 @@ def run(demo, workflow, out):
         summary = demo.call('GET', '/v1/status'); assert summary['jobs']['succeeded'] >= 1
         events = demo.call('GET', '/v1/events'); assert any(e['kind'] == 'job.succeeded' for e in events)
     return {'workflow': workflow, 'state': result['state'], 'pngBytes': len(png), 'pngDigest': hashlib.sha256(png).hexdigest()}
+
+
+def stroke_render(demo, out):
+    """Exercise vector strokes end to end through the real HTTP server."""
+    doc = stroked_sample()
+    created = demo.call('PUT', '/v1/scenes/stroked', {'name': '描边印记', 'expectedRevision': 0, 'document': doc})
+    assert created['revision'] == 1
+    # Unknown fields and malformed strokes are rejected before entering any queue.
+    bad_field = json.loads(json.dumps(doc))
+    bad_field['layers'][0]['stroke']['dash'] = 4
+    demo.call('PUT', '/v1/scenes/bad-stroke', {'name': '坏描边', 'expectedRevision': 0, 'document': bad_field}, 400)
+    invalid_width = json.loads(json.dumps(doc))
+    invalid_width['layers'][0]['stroke'] = {'width': 0, 'color': '#FF0000'}
+    demo.call('PUT', '/v1/scenes/bad-stroke', {'name': '坏描边', 'expectedRevision': 0, 'document': invalid_width}, 400)
+    invalid_color = json.loads(json.dumps(doc))
+    invalid_color['layers'][0]['stroke'] = {'width': 4, 'color': 'red'}
+    demo.call('PUT', '/v1/scenes/bad-stroke', {'name': '坏描边', 'expectedRevision': 0, 'document': invalid_color}, 400)
+    invalid_target = json.loads(json.dumps(doc))
+    invalid_target['layers'][2]['children'][0] = {
+        'id': 'facet', 'kind': 'image', 'width': 100, 'height': 100, 'assetId': 'missing',
+        'transform': {'scaleX': 1, 'scaleY': 1}, 'opacity': .8,
+        'stroke': {'width': 5, 'color': '#B03A2E'}}
+    demo.call('PUT', '/v1/scenes/bad-stroke', {'name': '坏描边', 'expectedRevision': 0, 'document': invalid_target}, 400)
+    # Expensive strokes must be refused at submission (429), never queued.
+    heavy = {'width': 1500, 'height': 1500, 'background': '#FFFFFF', 'layers': [
+        dict(stroked_sample()['layers'][0], id=f'sheet-{i}', width=900, height=900,
+             transform={'x': 55, 'y': 55, 'scaleX': 1, 'scaleY': 1, 'degrees': 0},
+             stroke={'width': 110, 'color': '#FF0000'}) for i in range(40)]}
+    demo.call('PUT', '/v1/scenes/heavy-stroke', {'name': '昂贵轮廓', 'expectedRevision': 0, 'document': heavy})
+    heavy_snap = demo.call('POST', '/v1/scenes/heavy-stroke/snapshots', {'expectedRevision': 1}, 201)
+    demo.call('POST', '/v1/jobs', {'snapshotId': heavy_snap['id'], 'scale': 1}, 429,
+              {'Idempotency-Key': 'stroke-too-expensive'})
+    queued = demo.call('GET', '/v1/status')['jobs'].get('queued', 0)
+    assert queued == 0, 'over-budget stroke leaked into the queue'
+    # The same geometry with an affordable width is accepted and rendered.
+    for layer in heavy['layers']:
+        layer['stroke']['width'] = 100
+    demo.call('PUT', '/v1/scenes/heavy-stroke', {'name': '昂贵轮廓', 'expectedRevision': 1, 'document': heavy})
+    cheap_snap = demo.call('POST', '/v1/scenes/heavy-stroke/snapshots', {'expectedRevision': 2}, 201)
+    cheap_job = demo.wait(demo.submit(cheap_snap, 'stroke-affordable')['id'])
+    assert cheap_job['state'] == 'succeeded'
+    # Freeze, then render scale 1 and scale 2 from identical frozen inputs.
+    snapshot = demo.call('POST', '/v1/scenes/stroked/snapshots', {'expectedRevision': 1}, 201)
+    job1 = demo.wait(demo.submit(snapshot, 'stroke-scale-1', 1)['id'])
+    job2 = demo.wait(demo.submit(snapshot, 'stroke-scale-2', 2)['id'])
+    png1 = demo.call('GET', '/v1/artifacts/' + job1['artifactId'])
+    png2 = demo.call('GET', '/v1/artifacts/' + job2['artifactId'])
+    assert struct.unpack('>II', png1[16:24]) == (320, 240)
+    assert struct.unpack('>II', png2[16:24]) == (640, 480)
+    digest1, digest2 = hashlib.sha256(png1).hexdigest(), hashlib.sha256(png2).hexdigest()
+    # Replay the same idempotency key: fixed inputs reproduce identical bytes.
+    replay = demo.wait(demo.submit(snapshot, 'stroke-scale-1', 1)['id'])
+    assert replay['id'] == job1['id']
+    assert hashlib.sha256(demo.call('GET', '/v1/artifacts/' + replay['artifactId'])).hexdigest() == digest1
+    # Exchange package round trip keeps stroke geometry and yields the same PNG.
+    package = demo.call('GET', '/v1/snapshots/' + snapshot['id'] + '/package')
+    restored = demo.call('POST', '/v1/imports/stroked-copy', {'name': '描边副本', 'package': package}, 201)
+    assert restored['document'] == snapshot['document']
+    assert restored['document']['layers'][0]['stroke'] == {'width': 4, 'color': '#1C1C1C'}
+    copy_snap = demo.call('POST', '/v1/scenes/stroked-copy/snapshots', {'expectedRevision': 1}, 201)
+    copy_job = demo.wait(demo.submit(copy_snap, 'stroke-package-copy', 1)['id'])
+    digest_copy = hashlib.sha256(demo.call('GET', '/v1/artifacts/' + copy_job['artifactId'])).hexdigest()
+    assert digest_copy == digest1, 'package round trip changed stroke rendering'
+    if out:
+        Path(out).mkdir(parents=True, exist_ok=True)
+        (Path(out) / 'stroke-scale-1.png').write_bytes(png1)
+        (Path(out) / 'stroke-scale-2.png').write_bytes(png2)
+    return {'workflow': 'stroke-render', 'pngDigest1x': digest1, 'pngDigest2x': digest2,
+            'packageDigestMatch': digest_copy == digest1, 'rejectedBeforeQueue': True}
 
 
 def main():
